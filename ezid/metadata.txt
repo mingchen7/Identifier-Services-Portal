@@ -1,0 +1,3 @@
+who: Proust, Marcel
+what: Remembrance of Things Past
+when: 1922
