@@ -1,3 +1,8 @@
+# The code is modified to call ezid service in Python
+# Greg Janee <gjanee@ucop.edu>
+# May 2013
+# link to original version: http://ezid.cdlib.org/doc/ezid-client.py
+
 import codecs
 import optparse
 import re
