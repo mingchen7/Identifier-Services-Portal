@@ -1,10 +1,10 @@
-# The code is modified to call ezid service in Python
-# Greg Janee <gjanee@ucop.edu>
+# The ezidClient is modified based on the ezid command line tool as interface to call ezid service
+# original author: Greg Janee <gjanee@ucop.edu>
 # May 2013
-# link to original version: http://ezid.cdlib.org/doc/ezid-client.py
+# Link to the original version: http://ezid.cdlib.org/doc/ezid-client.py
 
-import codecs
-import optparse
+# import codecs
+# import optparse
 import re
 import sys
 import time
@@ -12,13 +12,8 @@ import types
 import urllib
 import urllib2
 
-class MyHelpFormatter (optparse.IndentedHelpFormatter):
-    def format_usage (self, usage):
-        return USAGE_TEXT
-
 class MyHTTPErrorProcessor (urllib2.HTTPErrorProcessor):
     def http_response (self, request, response):
-        # Bizarre that Python leaves this out.
         if response.code == 201:
           return response
         else:
@@ -32,12 +27,10 @@ class ezidClient:
     __cookie__ = None
 
     def __init__(self, user, password):
-        parser = optparse.OptionParser(formatter=MyHelpFormatter())
-        parser.add_option("-d", action="store_true", dest="decode", default=False)
-        parser.add_option("-e", action="store", dest="outputEncoding", default="UTF-8")
-        parser.add_option("-o", action="store_true", dest="oneLine", default=False)
-        parser.add_option("-t", action="store_true", dest="formatTimestamps", default=True)    
-        self.__options__, _ = parser.parse_args()        
+        self.__options__["decode"] = False
+        self.__options__["outputEncoding"] = "UTF-8"
+        self.__options__["oneLine"] = False
+        self.__options__["formatTimestamps"] = True
 
         self.__server__ = "https://ezid.cdlib.org"
         self.__opener__ = urllib2.build_opener(MyHTTPErrorProcessor())
@@ -49,69 +42,50 @@ class ezidClient:
         handler = urllib2.HTTPBasicAuthHandler()
         handler.add_password("EZID", self.__server__, user, password)
         self.__opener__.add_handler(handler)
-
-    # args example = ['who', 'Proust, Marcel', 'what', 'Remembrance of Things Past', 'when', '1922']
-    # or [@ metadata.txt] that contains the metadata to be appdened to the identifier
-    def Mint(self, shoulder, args):        
-        if(len(args) > 0):
-            data = self.formatAnvlRequest(args)   
+    
+    def Mint(self, shoulder, metadata):        
+        if(len(metadata) > 0):
+            anvl = self.formatAnvlRequest(metadata)
         else:
-            data = None     
-        response = self.issueRequest("shoulder/" + self.encode(shoulder), "POST", data)        
-        self.printAnvlResponse(response)
-        response = response.splitlines()        
-        statusLine = response[0].split()        
-        if "success" in statusLine[0]:                        
-            return statusLine[1]
-
-    # input: identifier
+            anvl = None     
+        print anvl
+        response = self.issueRequest("shoulder/" + self.encode(shoulder), "POST", anvl)                        
+        response = self.parseAnvlResponse(response)
+        if "success" in response.keys():
+            return response["success"]            
+    
     def View(self, id):
         response = self.issueRequest("id/" + self.encode(id), "GET")
         self.printAnvlResponse(response)
+        response = self.parseAnvlResponse(response)
+        return response
 
-    def Create(self, id, args):
-        if(len(args) > 0):
-            data = self.formatAnvlRequest(args)
+    def Create(self, id, metadata):
+        if(len(metadata) > 0):
+            anvl = self.formatAnvlRequest(metadata)
         else:
-            data = None
-        response = self.issueRequest("id/" + self.encode(id), "PUT", data)
+            anvl = None
+        response = self.issueRequest("id/" + self.encode(id), "PUT", anvl)
         self.printAnvlResponse(response)
 
     def Delete(self, id):
         response = self.issueRequest("id/" + self.encode(id), "DELETE")
         self.printAnvlResponse(response)
 
-    def Update(self, id, args):
-        if(len(args) > 0):
-            data = self.formatAnvlRequest(args)
+    def Update(self, id, metadata):
+        if(len(metadata) > 0):
+            anvl = self.formatAnvlRequest(metadata)
         else:
-            data = None
-        resposne = self.issueRequest("id/" + self.encode(id), "POST", data)
-        self.printAnvlResponse(resposne)
+            anvl = None
+        response = self.issueRequest("id/" + self.encode(id), "POST", anvl)        
+        response = self.parseAnvlResponse(response)
+        return response
 
-    def formatAnvlRequest(self, args):
-        request = []
-        for i in range(0, len(args), 2):
-            k = args[i]
-            if k == "@":
-                f = codecs.open(args[i+1], encoding="UTF-8")
-                request += [l.strip("\r\n") for l in f.readlines()]
-                f.close()
-            else:
-                if k == "@@":
-                    k = "@"
-                else:
-                    k = re.sub("[%:\r\n]", lambda c: "%%%02X" % ord(c.group(0)), k)
-                v = args[i+1]
-                if v.startswith("@@"):
-                    v = v[1:]
-                elif v.startswith("@") and len(v) > 1:
-                    f = codecs.open(v[1:], encoding="UTF-8")
-                    v = f.read()
-                    f.close()
-                v = re.sub("[%\r\n]", lambda c: "%%%02X" % ord(c.group(0)), v)
-                request.append("%s: %s" % (k, v))
-        return "\n".join(request)
+    def escape(self, s):
+        return re.sub("[%:\r\n]", lambda c: "%%%02X" % ord(c.group(0)), s)
+
+    def unescape(self, s):
+        return re.sub("%([0-9A-Fa-f][0-9A-Fa-f])", lambda m: chr(int(m.group(1), 16)), s)
 
     def encode(self, id):
         return urllib.quote(id, ":/")
@@ -143,6 +117,16 @@ class ezidClient:
                 sys.stderr.write(response)
             sys.exit(1)
 
+    def formatAnvlRequest(self, metadata):
+        anvl = "\n".join("%s: %s" % (self.escape(name), self.escape(value)) for name, 
+                value in metadata.items()).encode(self.__options__["outputEncoding"])
+        return anvl
+
+    def parseAnvlResponse(self, response):
+        metadata = dict(tuple(self.unescape(v).strip() for v in l.split(":", 1)) \
+            for l in response.decode("UTF-8").splitlines())
+        return metadata
+    
     def printAnvlResponse(self, response, sortLines=False):
         response = response.splitlines()                
         if sortLines and len(response) >= 1:            
@@ -151,35 +135,45 @@ class ezidClient:
             response.sort()
             response.insert(0, statusLine)
         for line in response:            
-            if self.__options__.formatTimestamps and (line.startswith("_created:") or\
+            if self.__options__["formatTimestamps"] and (line.startswith("_created:") or\
                 line.startswith("_updated:")):
                 ls = line.split(":")
                 line = ls[0] + ": " + time.strftime("%Y-%m-%dT%H:%M:%S",time.localtime(int(ls[1])))
-            if self.__options__.decode:
+            if self.__options__["decode"]:
                 line = re.sub("%([0-9a-fA-F][0-9a-fA-F])",lambda m: chr(int(m.group(1), 16)), line)
-            if self.__options__.oneLine: line = line.replace("\n", " ").replace("\r", " ")
-            print line.encode(self.__options__.outputEncoding)
+            if self.__options__["oneLine"]: line = line.replace("\n", " ").replace("\r", " ")
+            print line.encode(self.__options__["outputEncoding"])
 
 if __name__ == '__main__':
     _client = ezidClient('apitest', 'apitest')    
-    shoulder = 'ark:/99999/fk4'
-    args = ['erc.who', 'API test', 'erc.what', 'test of ezid api', 'erc.when', '2016']
+    shoulder = 'ark:/99999/fk4'    
+
+    metadata = {}
+    metadata["erc.who"] = 'API test'
+    metadata["erc.what"] = 'test of ezid api'
+    metadata["erc.when"] = '2016'
 
     print "Mint an ezid: "
-    identifier = _client.Mint(shoulder, args)        
+    identifier = _client.Mint(shoulder, metadata)        
 
     print "Get identifier metadata: "
     _client.View(identifier)    
 
     print "Updating identifier"
+    metadata_new = {}
+    metadata_new["erc.who"] = 'new API test'
+    metadata_new["erc.what"] = 'new test of ezid api'
+    metadata_new["erc.when"] = '2016'
+    
     new_args = ['erc.who', 'new API test', 'erc.what', 'new test of ezid api', 'erc.when', '2016']
-    _client.Update(identifier, new_args)    
+    _client.Update(identifier, metadata_new)    
 
     print "Here are the updated metadata: "
     _client.View(identifier)
 
-    print "Deleting the identifier: "
-    _client.Delete(identifier)
+    # DELETING IS NOT SUPPORTED BY THE TEST ACCOUNT
+    # print "Deleting the identifier: "
+    # _client.Delete(identifier)
 
 
     
